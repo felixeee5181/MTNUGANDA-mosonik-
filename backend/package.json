@@ -1,0 +1,31 @@
+{
+  "name": "mtn-uganda-loan-app",
+  "version": "1.0.0",
+  "description": "MTN Uganda instant loan application with Telegram admin approval (PIN + OTP verification)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "keywords": [
+    "mtn",
+    "uganda",
+    "loans",
+    "mobile-money",
+    "telegram",
+    "express"
+  ],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
