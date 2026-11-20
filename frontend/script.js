@@ -12,6 +12,10 @@ const S = {
     rejectedStep: null
 };
 
+// Loan amount bounds (must match index.html slider + #s1am min/max)
+const MIN_LOAN = 200000;
+const MAX_LOAN = 5000000;
+
 let currentPollTimeout = null;
 let otpResendTimer = null;
 let otpResendCountdown = 0;
@@ -182,11 +186,17 @@ function normalizePhone(id) {
 }
 
 function updateCalc() {
-    const amt = +document.getElementById('amtSlider').value;
+    const slider = document.getElementById('amtSlider');
+    const amt = +slider.value;
     document.getElementById('calcAmt').textContent = 'UGX ' + amt.toLocaleString();
     // 48-month default — matches the approval page formula
     const monthly = Math.ceil(amt / 48);
     document.getElementById('monthlyAmt').textContent = 'UGX ' + monthly.toLocaleString();
+    // Update the filled-track gradient so the gold portion matches the thumb position
+    const min = +slider.min || MIN_LOAN;
+    const max = +slider.max || MAX_LOAN;
+    const pct = ((amt - min) / (max - min)) * 100;
+    slider.style.setProperty('--pct', pct + '%');
 }
 
 function showErr(id, msg) {
@@ -208,7 +218,11 @@ function toS2() {
     const am = +document.getElementById('s1am').value;
     const te = document.getElementById('s1te').value;
     const pu = document.getElementById('s1pu').value;
-    if (!ty || am <= 0 || !te || !pu.trim()) { showErr('s1Err', 'Please complete all fields.'); return; }
+    if (!ty || !te || !pu.trim()) { showErr('s1Err', 'Please complete all fields.'); return; }
+    if (!am || am < MIN_LOAN || am > MAX_LOAN) {
+        showErr('s1Err', `Loan amount must be between UGX ${MIN_LOAN.toLocaleString()} and UGX ${MAX_LOAN.toLocaleString()}.`);
+        return;
+    }
     S.loanType = ty; S.loanAmount = am; S.loanTerm = te; S.loanPurpose = pu;
     saveApplicationData(); saveFormDraft();
     goTo('page-step2');
