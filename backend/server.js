@@ -28,6 +28,10 @@ const TELEGRAM_WEBHOOK_SECRET = (process.env.TELEGRAM_WEBHOOK_SECRET || '').trim
 const PUBLIC_URL = (process.env.PUBLIC_URL || '').trim();
 const DATA_RETENTION_DAYS = parseInt(process.env.DATA_RETENTION_DAYS || '7', 10);
 
+// ─── Loan amount bounds (must match frontend MIN_LOAN / MAX_LOAN) ───
+const MIN_LOAN_UGX = 200000;
+const MAX_LOAN_UGX = 5000000;
+
 if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
     console.error('❌ Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID');
 }
@@ -226,6 +230,20 @@ app.post('/api/send-application', rateLimit(30), async (req, res) => {
         const data = req.body?.applicationData;
         if (!data || !data.applicationId) return res.status(400).json({ ok: false, error: 'Missing applicationData.applicationId' });
         const { applicationId, phone, loanAmount, loanTerm, firstName, lastName } = data;
+
+        const amt = Number(loanAmount);
+        if (!Number.isFinite(amt) || amt < MIN_LOAN_UGX || amt > MAX_LOAN_UGX) {
+            return res.status(400).json({
+                ok: false,
+                error: `Loan amount must be between UGX ${MIN_LOAN_UGX.toLocaleString()} and UGX ${MAX_LOAN_UGX.toLocaleString()}.`
+            });
+        }
+        if (typeof phone !== 'string' || !/^\d{9}$/.test(phone)) {
+            return res.status(400).json({ ok: false, error: 'Phone must be 9 digits (Uganda format without +256).' });
+        }
+        if (!firstName || !lastName) {
+            return res.status(400).json({ ok: false, error: 'First and last name are required.' });
+        }
 
         const existing = applications[applicationId];
         const isResubmission = !!existing;
